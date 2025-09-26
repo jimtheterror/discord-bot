@@ -8,12 +8,12 @@ from typing import Optional, List, Tuple
 
 import discord
 
-from .database import get_db_session
-from .models import (
+from database import get_db_session
+from models import (
     Assignment, AssignmentStatus, User, ApprovalRequest, ApprovalType, 
     ApprovalStatus, Settings, get_settings, log_action
 )
-from .selectors import SelectionService
+from selection_service import SelectionService
 
 logger = logging.getLogger(__name__)
 

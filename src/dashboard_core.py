@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 import discord
 
-from .database import get_db_session
-from .models import (
+from database import get_db_session
+from models import (
     Assignment, AssignmentStatus, User, Shift, Settings, DashState,
     TaskTemplate, get_settings, log_action
 )
@@ -97,7 +97,7 @@ class DashboardManager:
                     logger.warning(f"Failed to update existing dashboard: {e}")
             
             # Create new dashboard
-            from .dashboard_views import DashboardView
+            from dashboard_views import DashboardView
             view = DashboardView()
             message = await channel.send(embed=embed, view=view)
             

@@ -18,6 +18,7 @@ sys.path.append(current_dir)
 from scheduler.scheduler import ROBOT_IDS
 from dashboard_manager import EquipmentDashboard
 from dotenv import load_dotenv
+from dashboard_core import DashboardManager
 
 # Task assignment system imports
 from database import init_database, check_database_connection, get_db_session
@@ -61,6 +62,7 @@ equipment_dashboard = EquipmentDashboard()
 
 # Initialize Assignment Scheduler (will be set after bot is ready)
 assignment_scheduler = None
+dashboard_manager = None
 
 # Nickname storage file
 NICKNAME_STORAGE_FILE = "nickname_storage.json"
@@ -530,6 +532,16 @@ async def on_ready():
     except Exception as e:
         logger.error(f"Failed to start assignment scheduler: {e}")
     
+    # Initialize live dashboard manager
+    try:
+        global dashboard_manager
+        dashboard_manager = DashboardManager(bot)
+        # Try to update immediately in admin channel if configured
+        await dashboard_manager.update_dashboard()
+        logger.info("Dashboard manager initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize dashboard manager: {e}")
+    
     # Sync slash commands to all guilds the bot is in
     try:
         # Global sync (takes up to 1 hour)
@@ -695,6 +707,35 @@ async def dashboard_command(interaction: discord.Interaction):
                 "❌ An error occurred while managing the dashboard.",
                 ephemeral=True
             )
+        except:
+            pass
+
+# Live assignment dashboard command
+@bot.tree.command(name="live_dashboard", description="[Admin/Manager] Create or refresh the live assignment dashboard in this channel")
+async def live_dashboard_command(interaction: discord.Interaction):
+    """Create or refresh the live assignment dashboard (Admin/Manager only)"""
+    # Check role permissions
+    if not has_required_role(interaction, ["Admin", "Manager"]) and not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "❌ This command is restricted to Admin and Manager roles only.",
+            ephemeral=True
+        )
+        return
+    
+    try:
+        await interaction.response.defer(ephemeral=True)
+        global dashboard_manager
+        if dashboard_manager is None:
+            dashboard_manager = DashboardManager(interaction.client)
+        success = await dashboard_manager.create_or_update_dashboard(interaction.channel)
+        if success:
+            await interaction.followup.send("✅ Live assignment dashboard created/updated here.", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Failed to create/update live dashboard.", ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error in live dashboard command: {e}")
+        try:
+            await interaction.followup.send("❌ An error occurred while managing the live dashboard.", ephemeral=True)
         except:
             pass
 
@@ -1017,6 +1058,13 @@ async def task_command(
                 await list_tasks(interaction, db)
             elif action == "add":
                 await add_task(interaction, db, name, priority, window_start, window_end, instructions, params_schema)
+                # After adding a task, attempt immediate assignment to available operators
+                try:
+                    scheduler = assignment_scheduler
+                    if scheduler:
+                        await attempt_immediate_task_assignment(db, scheduler, name)
+                except Exception as e:
+                    logger.error(f"Auto-assign after task add failed: {e}")
             elif action == "update":
                 await update_task(interaction, db, name, priority, window_start, window_end, instructions, params_schema, is_active)
             elif action == "remove":
@@ -1136,6 +1184,51 @@ async def add_task(interaction, db, name, priority, window_start, window_end, in
     )
     
     await interaction.response.send_message(f"✅ Task '{name}' added successfully.", ephemeral=True)
+
+
+async def attempt_immediate_task_assignment(db, scheduler: AssignmentScheduler, task_name: str):
+    """Assign a newly added task to any operators currently on Data Labelling.
+    - Start now; end at top of hour (or next hour if >= :40).
+    """
+    try:
+        now_utc = datetime.now(timezone.utc)
+        # Determine end time per rules
+        minute = now_utc.minute
+        if minute >= 40:
+            end_boundary = (now_utc.replace(minute=0, second=0, microsecond=0) + timedelta(hours=2))
+        else:
+            end_boundary = (now_utc.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+
+        # Find all active Data Labelling assignments
+        from models import Assignment, AssignmentStatus
+        available = db.query(Assignment).filter(
+            Assignment.status == AssignmentStatus.ACTIVE,
+            Assignment.task_name == "Data Labelling"
+        ).all()
+
+        if not available:
+            return
+
+        # Assign new task to these operators by converting their current assignment
+        for a in available:
+            a.task_name = task_name
+            a.started_at = now_utc
+            a.ends_at = end_boundary
+            a.template_id = None
+            a.params = {}
+            a.covering_for_user_id = None
+            a.forced = True
+
+        db.commit()
+
+        # Post/update widgets
+        for a in available:
+            try:
+                await scheduler.post_assignment_widget(a)
+            except Exception as e:
+                logger.error(f"Failed to post widget for immediate assignment {a.id}: {e}")
+    except Exception as e:
+        logger.error(f"attempt_immediate_task_assignment error: {e}")
 
 
 async def update_task(interaction, db, name, priority, window_start, window_end, instructions, params_schema, is_active):

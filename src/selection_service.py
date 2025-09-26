@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
-from .models import User, TaskTemplate, Assignment, AssignmentStatus
+from models import User, TaskTemplate, Assignment, AssignmentStatus
 
 logger = logging.getLogger(__name__)
 

@@ -24,7 +24,7 @@ class DashboardView(discord.ui.View):
             await interaction.response.defer()
             
             # Trigger dashboard update
-            from .dashboard_core import DashboardManager
+            from dashboard_core import DashboardManager
             dashboard_manager = DashboardManager(interaction.client)
             await dashboard_manager.update_dashboard()
             
@@ -56,7 +56,7 @@ class DashboardView(discord.ui.View):
             
             await interaction.response.defer()
             
-            from .dashboard_core import DashboardManager
+            from dashboard_core import DashboardManager
             dashboard_manager = DashboardManager(interaction.client)
             success = await dashboard_manager.create_snapshot(interaction.channel)
             

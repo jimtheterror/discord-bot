@@ -13,12 +13,22 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
-from .database import get_db_session
-from .models import User, Shift, Assignment, AssignmentStatus, Settings, TaskTemplate, log_action
-from .selectors import SelectionService
-from .thread_manager import ThreadManager
+from database import get_db_session
+from models import User, Shift, Assignment, AssignmentStatus, Settings, TaskTemplate, log_action
+from selection_service import SelectionService
+from thread_manager import ThreadManager
+from dashboard_core import DashboardManager
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    """Return a UTC-aware datetime; assume UTC if naive."""
+    if dt is None:
+        return dt
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 @dataclass
@@ -37,6 +47,7 @@ class AssignmentScheduler:
         self.scheduler = AsyncIOScheduler(timezone=timezone.utc)
         self.selection_service = SelectionService()
         self.thread_manager = ThreadManager(bot)
+        self.dashboard_manager = DashboardManager(bot)
         self.running = False
         
         # Track pending acknowledgments for escalation
@@ -69,7 +80,7 @@ class AssignmentScheduler:
         
         # Schedule dashboard updates every minute  
         self.scheduler.add_job(
-            self.update_dashboard,
+            self.dashboard_manager.update_dashboard,
             CronTrigger(second=30),  # Offset by 30s to avoid conflicts
             id="update_dashboard",
             max_instances=1,
@@ -120,12 +131,9 @@ class AssignmentScheduler:
         """Calculate hour index (1-9) within a shift"""
         if current_time is None:
             current_time = datetime.now(timezone.utc)
-            
-        # Ensure both times are UTC
-        if shift_start.tzinfo is None:
-            shift_start = shift_start.replace(tzinfo=timezone.utc)
-        if current_time.tzinfo is None:
-            current_time = current_time.replace(tzinfo=timezone.utc)
+        # Ensure both times are UTC-aware
+        shift_start = _ensure_aware(shift_start)
+        current_time = _ensure_aware(current_time)
             
         elapsed = current_time - shift_start
         hour_index = int(elapsed.total_seconds() // 3600) + 1
@@ -318,8 +326,9 @@ class AssignmentScheduler:
         time_remaining = "Unknown"
         if assignment.ends_at:
             now = datetime.now(timezone.utc)
-            if assignment.ends_at > now:
-                remaining = assignment.ends_at - now
+            ends_at = _ensure_aware(assignment.ends_at)
+            if ends_at > now:
+                remaining = ends_at - now
                 hours = int(remaining.total_seconds() // 3600)
                 minutes = int((remaining.total_seconds() % 3600) // 60)
                 if hours > 0:
@@ -361,9 +370,10 @@ class AssignmentScheduler:
             )
         
         if assignment.ends_at:
+            ends_at = _ensure_aware(assignment.ends_at)
             embed.add_field(
                 name="Ends At",
-                value=f"<t:{int(assignment.ends_at.timestamp())}:t>",
+                value=f"<t:{int(ends_at.timestamp())}:t>",
                 inline=True
             )
         
@@ -399,7 +409,8 @@ class AssignmentScheduler:
                 ).all()
                 
                 for assignment in pending_assignments:
-                    assignment_age = now_utc - assignment.created_at
+                    created_at = _ensure_aware(assignment.created_at)
+                    assignment_age = now_utc - created_at
                     
                     # 5-minute reminder
                     if assignment_age >= timedelta(minutes=5) and assignment_age < timedelta(minutes=6):
@@ -549,7 +560,7 @@ class AssignmentScheduler:
             
             # Add time elapsed
             if assignment.created_at:
-                elapsed = datetime.now(timezone.utc) - assignment.created_at
+                elapsed = datetime.now(timezone.utc) - _ensure_aware(assignment.created_at)
                 elapsed_minutes = int(elapsed.total_seconds() / 60)
                 embed.add_field(
                     name="Time Elapsed",

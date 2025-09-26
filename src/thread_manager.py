@@ -7,8 +7,8 @@ from typing import Optional, Dict, List
 import discord
 from datetime import datetime, timedelta
 
-from .database import get_db_session
-from .models import get_settings, get_or_create_user
+from database import get_db_session
+from models import get_settings, get_or_create_user
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +43,11 @@ class ThreadManager:
             if user_id in self._thread_cache:
                 thread = self._thread_cache[user_id]
                 try:
-                    # Verify thread still exists and is accessible
-                    await thread.fetch()
+                    # Verify thread still exists and is accessible by fetching message history head
+                    async for _ in thread.history(limit=1):
+                        pass
                     return thread
-                except (discord.NotFound, discord.Forbidden):
+                except (discord.NotFound, discord.Forbidden, AttributeError):
                     # Thread was deleted or inaccessible, remove from cache
                     del self._thread_cache[user_id]
             

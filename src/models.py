@@ -54,8 +54,18 @@ class User(Base):
     
     # Relationships
     shifts = relationship("Shift", back_populates="user", cascade="all, delete-orphan")
-    assignments = relationship("Assignment", back_populates="user", cascade="all, delete-orphan")
-    approval_requests = relationship("ApprovalRequest", back_populates="user", cascade="all, delete-orphan")
+    assignments = relationship(
+        "Assignment",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="Assignment.user_id"
+    )
+    approval_requests = relationship(
+        "ApprovalRequest",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="ApprovalRequest.user_id"
+    )
     
     def __repr__(self):
         return f"<User(id={self.id}, display_name={self.display_name})>"
@@ -214,7 +224,7 @@ class AuditLog(Base):
     actor_id = Column(String, nullable=True)  # User who performed the action (null for system)
     action = Column(String, nullable=False)   # Action type
     target = Column(String, nullable=True)    # Target of the action
-    metadata = Column(JSON, nullable=True, default=dict)  # Action-specific data
+    data = Column(JSON, nullable=True, default=dict)  # Action-specific data
     
     # Indexes
     __table_args__ = (
@@ -287,7 +297,7 @@ def log_action(db: Session, action: str, actor_id: Optional[str] = None, target:
         actor_id=actor_id,
         action=action,
         target=target,
-        metadata=metadata or {}
+        data=metadata or {}
     )
     db.add(log_entry)
     db.commit()
