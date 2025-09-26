@@ -1,0 +1,118 @@
+{
+  "equipment_state": {
+    "robots": {
+      "Prod 1": {
+        "status": "operational",
+        "since": "2025-09-23T12:01:15.796000+00:00",
+        "last_update": "operational"
+      },
+      "Prod 2": {
+        "status": "operational",
+        "since": "2025-09-23T12:01:20.085000+00:00",
+        "last_update": "operational"
+      },
+      "Prod 3": {
+        "status": "being fixed",
+        "since": "2025-09-08T03:27:17.303000+00:00",
+        "last_update": "being fixed"
+      },
+      "Prod 4": {
+        "status": "operational",
+        "since": "2025-09-23T12:01:22.466000+00:00",
+        "last_update": "operational"
+      },
+      "Prod 5": {
+        "status": "being fixed",
+        "since": "2025-09-08T03:27:28.899000+00:00",
+        "last_update": "being fixed"
+      },
+      "Prod 6": {
+        "status": "operational",
+        "since": "2025-09-23T12:01:25.027000+00:00",
+        "last_update": "operational"
+      }
+    },
+    "joysticks": {
+      "Gello 51": {
+        "status": "defective power supply, wait for replacement",
+        "since": "2025-09-09T07:24:14.193000+00:00",
+        "last_update": "defective power supply, wait for replacement"
+      },
+      "Gello 52": {
+        "status": "ready for testing",
+        "since": "2025-09-08T22:56:01.057000+00:00",
+        "last_update": "ready for testing"
+      },
+      "Gello 53": {
+        "status": "operational",
+        "since": "2025-09-09T08:18:27.716000+00:00",
+        "last_update": "operational"
+      },
+      "Gello 54": {
+        "status": "used for ID'ing motors",
+        "since": "2025-09-08T04:30:52.355000+00:00",
+        "last_update": "used for ID'ing motors"
+      },
+      "Gello 55": {
+        "status": "operational",
+        "since": "2025-09-08T03:26:42.580000+00:00",
+        "last_update": "operational"
+      },
+      "Gello 56": {
+        "status": "ready for testing",
+        "since": "2025-09-08T22:55:58.749000+00:00",
+        "last_update": "ready for testing"
+      },
+      "Gello 57": {
+        "status": "rpi and sd needs to be swapped",
+        "since": "2025-09-08T22:56:05.460000+00:00",
+        "last_update": "rpi and sd needs to be swapped"
+      },
+      "Gello 58": {
+        "status": "delayed right trigger",
+        "since": "2025-09-08T22:56:03.361000+00:00",
+        "last_update": "delayed right trigger"
+      },
+      "Gello 59": {
+        "status": "not setup yet",
+        "since": "2025-09-08T23:01:38.770000+00:00",
+        "last_update": "not setup yet"
+      },
+      "Gello 60": {
+        "status": "not setup yet",
+        "since": "2025-09-08T22:56:07.640000+00:00",
+        "last_update": "not setup yet"
+      }
+    },
+    "vr": {
+      "Headset 1": {
+        "status": "Operational",
+        "since": "2025-09-08T05:20:42.523000+00:00",
+        "last_update": "Operational"
+      },
+      "Headset 2": {
+        "status": "Operational",
+        "since": "2025-09-08T05:20:45.021000+00:00",
+        "last_update": "Operational"
+      },
+      "Headset 3": {
+        "status": "Operational",
+        "since": "2025-09-08T05:20:48.291000+00:00",
+        "last_update": "Operational"
+      },
+      "Headset 4": {
+        "status": "Operational",
+        "since": "2025-09-08T05:20:51.313000+00:00",
+        "last_update": "Operational"
+      },
+      "Headset 5": {
+        "status": "Operational",
+        "since": "2025-09-08T05:20:54.802000+00:00",
+        "last_update": "Operational"
+      }
+    }
+  },
+  "dashboard_message_id": 1420016759041167391,
+  "dashboard_channel_id": 1414441798516084827,
+  "last_updated": "2025-09-23T05:01:25.092329"
+}

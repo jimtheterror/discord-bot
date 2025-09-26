@@ -1,0 +1,20 @@
+Event Start Time,Group1,Group2,Group3
+0:00,DL,DL,DL
+0:30,DL,DL,DL
+1:00,Test + Prep for CC,Test + Prep for CC,Test + Prep for CC
+1:30,CC,CC,CC
+2:00,RP - 10 min break,RP,DL
+2:30,RP,RP - 10 min break,DL
+3:00,DL,RP,Lunch
+3:30,DL,RP,Lunch
+4:00,RP,Lunch,DL
+4:30,RP,Lunch,DL
+5:00,Lunch,DL,RP
+5:30,Lunch,DL,RP
+6:00,RP,DL,RP - 10 min break
+6:30,RP,DL,RP
+7:00,DL,RP,RP - 10 min break
+7:30,DL,RP - 10 min break,RP
+8:00,RP - 10 min break,RP,DL
+8:30,CC,CC,CC
+9:00,Shift End,Shift End,Shift End

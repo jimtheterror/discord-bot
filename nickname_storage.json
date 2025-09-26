@@ -1,0 +1,261 @@
+{
+  "1391923235326791752_1392582450424582174": {
+    "original_nickname": "jim",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392582450424582174,
+    "roles": [
+      {
+        "role_name": "Fixing",
+        "nickname_tag": "Fixing gello 53",
+        "duration_minutes": null,
+        "timestamp": "2025-09-07T23:24:44.023627"
+      },
+      {
+        "role_name": "Piloting",
+        "nickname_tag": "Gello 52",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T06:07:51.824287"
+      }
+    ]
+  },
+  "1391923235326791752_1386879672020897864": {
+    "original_nickname": "Russel Manangkil",
+    "guild_id": 1391923235326791752,
+    "user_id": 1386879672020897864,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "Current Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T16:04:23.451930"
+      }
+    ],
+    "timestamp": "2025-09-08T16:04:23.875343",
+    "current_tag": "break"
+  },
+  "1391923235326791752_1392611527168758002": {
+    "original_nickname": "John Rey Guzon",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392611527168758002,
+    "roles": [
+      "Current Shift"
+    ],
+    "timestamp": "2025-09-07T21:59:38.823817"
+  },
+  "1391923235326791752_1391903295798513704": {
+    "original_nickname": "Vince Allen Reblora",
+    "guild_id": 1391923235326791752,
+    "user_id": 1391903295798513704,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "Current Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-07T22:15:51.549961"
+      }
+    ],
+    "timestamp": "2025-09-08T16:04:49.892751",
+    "current_tag": "break"
+  },
+  "1391923235326791752_1394060864541429782": {
+    "original_nickname": "Cedric Bolante",
+    "guild_id": 1391923235326791752,
+    "user_id": 1394060864541429782,
+    "roles": [
+      "Current Shift",
+      "Piloting",
+      "On Break"
+    ],
+    "timestamp": "2025-09-07T22:05:29.684778",
+    "current_tag": "Gello 55"
+  },
+  "1391923235326791752_775331405688340510": {
+    "original_nickname": "Hezekiah Heldrix Nabor",
+    "guild_id": 1391923235326791752,
+    "user_id": 775331405688340510,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "Current Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-07T22:14:35.929576"
+      }
+    ],
+    "timestamp": "2025-09-08T16:04:25.191476",
+    "current_tag": "break"
+  },
+  "1391923235326791752_1392344652673450056": {
+    "original_nickname": "Mark Amante",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392344652673450056,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "Current Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-07T23:57:59.909561"
+      }
+    ],
+    "current_tag": "break",
+    "timestamp": "2025-09-08T05:25:43.023676"
+  },
+  "1391923235326791752_1392023521982677098": {
+    "original_nickname": "Ron Joshua Pe\u00f1aranda",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392023521982677098,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "Current Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T00:03:12.404469"
+      }
+    ],
+    "timestamp": "2025-09-08T05:37:51.801560"
+  },
+  "1391923235326791752_1392023182105509999": {
+    "original_nickname": "Brenn Carlo Monzones",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392023182105509999,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "Current Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T00:17:27.790566"
+      }
+    ],
+    "current_tag": "break",
+    "timestamp": "2025-09-08T05:09:30.835321"
+  },
+  "1391923235326791752_1392003318221373462": {
+    "original_nickname": "Paulo Molleno",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392003318221373462,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "Current Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T03:35:39.663104"
+      }
+    ],
+    "timestamp": "2025-09-08T05:37:51.717049"
+  },
+  "1391923235326791752_1392025544828387381": {
+    "original_nickname": "John Raymond Abello",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392025544828387381,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "Current Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-07T23:25:18.655869"
+      }
+    ],
+    "timestamp": "2025-09-08T05:09:26.117462"
+  },
+  "1391923235326791752_1367425354272211034": {
+    "original_nickname": "Eric",
+    "guild_id": 1391923235326791752,
+    "user_id": 1367425354272211034,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "On Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-07T22:19:03.088816"
+      },
+      {
+        "role_name": "Piloting",
+        "nickname_tag": "Gello 55",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T05:36:13.938857"
+      }
+    ],
+    "current_tag": "Gello 55",
+    "timestamp": "2025-09-08T05:36:14.307937"
+  },
+  "1391923235326791752_1392123590836621314": {
+    "original_nickname": "Lenard Del Mundo",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392123590836621314,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "On Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T05:59:22.391309"
+      },
+      {
+        "role_name": "Piloting",
+        "nickname_tag": "Gello 55",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T11:32:25.587467"
+      }
+    ],
+    "current_tag": "Gello 55",
+    "timestamp": "2025-09-08T11:32:26.044921"
+  },
+  "1391923235326791752_1391921121355501830": {
+    "original_nickname": "James Joshua Jerez",
+    "guild_id": 1391923235326791752,
+    "user_id": 1391921121355501830,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "On Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T05:59:44.896422"
+      }
+    ],
+    "current_tag": "On Shift",
+    "timestamp": "2025-09-08T05:59:45.221974"
+  },
+  "1391923235326791752_1213106651033501698": {
+    "original_nickname": "John Allen Ramilo",
+    "guild_id": 1391923235326791752,
+    "user_id": 1213106651033501698,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "On Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T05:59:49.132050"
+      }
+    ],
+    "current_tag": "On Shift",
+    "timestamp": "2025-09-08T05:59:49.501700"
+  },
+  "1391923235326791752_1392138640301232261": {
+    "original_nickname": "Jhondhel",
+    "guild_id": 1391923235326791752,
+    "user_id": 1392138640301232261,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "On Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T06:00:33.893817"
+      }
+    ],
+    "current_tag": "On Shift",
+    "timestamp": "2025-09-08T06:00:34.195026"
+  },
+  "1391923235326791752_1391932620484382831": {
+    "original_nickname": "Kenneth",
+    "guild_id": 1391923235326791752,
+    "user_id": 1391932620484382831,
+    "roles": [
+      {
+        "role_name": "Current Shift",
+        "nickname_tag": "On Shift",
+        "duration_minutes": null,
+        "timestamp": "2025-09-08T06:01:52.667920"
+      }
+    ],
+    "current_tag": "On Shift",
+    "timestamp": "2025-09-08T06:01:52.895117"
+  }
+}

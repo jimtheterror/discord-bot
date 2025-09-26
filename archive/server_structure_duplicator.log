@@ -1,0 +1,34 @@
+2025-09-20 08:43:38,128 - discord.client - WARNING - PyNaCl is not installed, voice will NOT be supported
+2025-09-20 08:43:38,129 - discord.ext.commands.bot - WARNING - Privileged message content intent is missing, commands may not work as expected.
+2025-09-20 08:43:38,129 - discord.client - INFO - logging in using static token
+2025-09-20 08:43:39,080 - __main__ - INFO - Synced 4 slash command(s)
+2025-09-20 08:43:39,456 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: c826054308f656abadda3c820911afdf).
+2025-09-20 08:43:41,467 - __main__ - INFO - 🤖 Server Structure Duplicator ready! Logged in as PilotLakbay#4955
+2025-09-20 08:44:26,396 - discord.app_commands.tree - ERROR - Ignoring exception in command 'analyze_structure'
+Traceback (most recent call last):
+  File "/Users/jim/Desktop/code ws1/discord/pilotLakbay/venv/lib/python3.13/site-packages/discord/app_commands/commands.py", line 859, in _do_call
+    return await self._callback(interaction, **params)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/Desktop/code ws1/discord/pilotLakbay/server_structure_duplicator.py", line 349, in analyze_structure
+    await interaction.response.defer()
+  File "/Users/jim/Desktop/code ws1/discord/pilotLakbay/venv/lib/python3.13/site-packages/discord/interactions.py", line 858, in defer
+    response = await adapter.create_interaction_response(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/Users/jim/Desktop/code ws1/discord/pilotLakbay/venv/lib/python3.13/site-packages/discord/webhook/async_.py", line 224, in request
+    raise NotFound(response, data)
+discord.errors.NotFound: 404 Not Found (error code: 10062): Unknown interaction
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/jim/Desktop/code ws1/discord/pilotLakbay/venv/lib/python3.13/site-packages/discord/app_commands/tree.py", line 1297, in _call
+    await command._invoke_with_namespace(interaction, namespace)
+  File "/Users/jim/Desktop/code ws1/discord/pilotLakbay/venv/lib/python3.13/site-packages/discord/app_commands/commands.py", line 884, in _invoke_with_namespace
+    return await self._do_call(interaction, transformed_values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/Desktop/code ws1/discord/pilotLakbay/venv/lib/python3.13/site-packages/discord/app_commands/commands.py", line 877, in _do_call
+    raise CommandInvokeError(self, e) from e
+discord.app_commands.errors.CommandInvokeError: Command 'analyze_structure' raised an exception: NotFound: 404 Not Found (error code: 10062): Unknown interaction
