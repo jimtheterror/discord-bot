@@ -925,16 +925,35 @@ class AssignmentView(discord.ui.View):
     async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handle edit task button click"""
         try:
-            # TODO: Implement edit task modal
-            await interaction.response.send_message(
-                "✏️ Edit task modal (Implementation coming soon)",
-                ephemeral=True
-            )
+            from .assignment_operations import AssignmentOperations
+            from .modals import EditTaskModal
+            
+            # Check if user can edit this assignment
+            operations = AssignmentOperations(interaction.client)
+            if not await operations.can_user_interact(self.assignment_id, str(interaction.user.id)):
+                await interaction.response.send_message(
+                    "❌ You can only edit your own tasks.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get current assignment parameters
+            assignment = await operations.get_assignment_details(self.assignment_id)
+            if not assignment:
+                await interaction.response.send_message(
+                    "❌ Assignment not found.",
+                    ephemeral=True
+                )
+                return
+            
+            # Show edit modal
+            modal = EditTaskModal(self.assignment_id, assignment.params or {})
+            await interaction.response.send_modal(modal)
             
         except Exception as e:
             logger.error(f"Error in edit task button: {e}")
             await interaction.response.send_message(
-                "❌ An error occurred while editing the task.",
+                "❌ An error occurred while opening the edit dialog.",
                 ephemeral=True
             )
     
@@ -946,16 +965,42 @@ class AssignmentView(discord.ui.View):
     async def end_early_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handle end early button click"""
         try:
-            # TODO: Implement end early modal
-            await interaction.response.send_message(
-                "⏹️ End early modal (Implementation coming soon)",
-                ephemeral=True
-            )
+            from .assignment_operations import AssignmentOperations
+            from .modals import EndEarlyModal
+            
+            # Check if user can end this assignment early
+            operations = AssignmentOperations(interaction.client)
+            if not await operations.can_user_interact(self.assignment_id, str(interaction.user.id)):
+                await interaction.response.send_message(
+                    "❌ You can only end your own tasks early.",
+                    ephemeral=True
+                )
+                return
+            
+            # Verify assignment is in correct state
+            assignment = await operations.get_assignment_details(self.assignment_id)
+            if not assignment:
+                await interaction.response.send_message(
+                    "❌ Assignment not found.",
+                    ephemeral=True
+                )
+                return
+            
+            if assignment.status not in [AssignmentStatus.ACTIVE, AssignmentStatus.COVERING]:
+                await interaction.response.send_message(
+                    "❌ Task must be active to request early end.",
+                    ephemeral=True
+                )
+                return
+            
+            # Show end early modal
+            modal = EndEarlyModal(self.assignment_id)
+            await interaction.response.send_modal(modal)
             
         except Exception as e:
             logger.error(f"Error in end early button: {e}")
             await interaction.response.send_message(
-                "❌ An error occurred while ending the task early.",
+                "❌ An error occurred while opening the end early dialog.",
                 ephemeral=True
             )
     

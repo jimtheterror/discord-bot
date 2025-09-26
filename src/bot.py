@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 # Task assignment system imports
 from database import init_database, check_database_connection, get_db_session
-from models import get_or_create_user, get_settings
+from models import get_or_create_user, get_settings, Assignment, AssignmentStatus, Shift, log_action
 from assignment_scheduler import AssignmentScheduler
 
 # Load environment variables
@@ -1267,6 +1267,177 @@ async def remove_task(interaction, db, name):
     )
     
     await interaction.response.send_message(f"✅ Task '{name}' removed successfully.", ephemeral=True)
+
+
+@bot.tree.command(name="force_assign", description="[Admin] Force assign a task to a user immediately")
+@app_commands.describe(
+    user="User to assign the task to",
+    task_name="Name of the task to assign",
+    params="JSON parameters for the task (optional)"
+)
+async def force_assign_command(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    task_name: str,
+    params: Optional[str] = None
+):
+    """Force assign a task to a user (Admin only)"""
+    
+    # Check admin permissions
+    if not has_required_role(interaction, ["Admin", "Manager"]) and not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "❌ You need Admin/Manager role or Manage Guild permission to force assign tasks.",
+            ephemeral=True
+        )
+        return
+        
+    try:
+        # Check if user has operator role
+        with get_db_session() as db:
+            settings = get_settings(db)
+            if settings.operator_role_id:
+                operator_role = interaction.guild.get_role(int(settings.operator_role_id))
+                if operator_role and operator_role not in user.roles:
+                    await interaction.response.send_message(
+                        f"❌ {user.display_name} does not have the Operator role.",
+                        ephemeral=True
+                    )
+                    return
+            
+            # Get or create user in database
+            db_user = get_or_create_user(db, str(user.id), user.display_name, is_operator=True)
+            
+            # Check if user has an active shift
+            active_shift = db.query(Shift).filter(
+                Shift.user_id == str(user.id),
+                Shift.end_at.is_(None)
+            ).first()
+            
+            if not active_shift:
+                # Create a shift for the user (assuming they're starting now)
+                from datetime import datetime, timezone
+                active_shift = Shift(
+                    user_id=str(user.id),
+                    start_at=datetime.now(timezone.utc),
+                    tz_base=settings.timezone
+                )
+                db.add(active_shift)
+                db.flush()  # Get the ID
+            
+            # Calculate current hour index
+            if assignment_scheduler:
+                hour_index = assignment_scheduler.calculate_hour_index(active_shift.start_at)
+            else:
+                # Fallback calculation
+                elapsed = datetime.now(timezone.utc) - active_shift.start_at
+                hour_index = max(1, min(9, int(elapsed.total_seconds() // 3600) + 1))
+            
+            # Parse parameters
+            task_params = {}
+            if params:
+                try:
+                    task_params = json.loads(params)
+                except json.JSONDecodeError:
+                    await interaction.response.send_message(
+                        "❌ Invalid JSON format for parameters.",
+                        ephemeral=True
+                    )
+                    return
+            
+            # Check if user already has an assignment for this hour
+            existing_assignment = db.query(Assignment).filter(
+                Assignment.user_id == str(user.id),
+                Assignment.shift_id == active_shift.id,
+                Assignment.hour_index == hour_index
+            ).first()
+            
+            if existing_assignment:
+                # Update existing assignment
+                existing_assignment.task_name = task_name
+                existing_assignment.params = task_params
+                existing_assignment.forced = True
+                existing_assignment.status = AssignmentStatus.PENDING_ACK
+                assignment_id = existing_assignment.id
+                action_type = "updated"
+            else:
+                # Create new assignment
+                now_utc = datetime.now(timezone.utc)
+                ends_at = now_utc.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                
+                new_assignment = Assignment(
+                    user_id=str(user.id),
+                    shift_id=active_shift.id,
+                    template_id=None,  # Force assignments don't use templates
+                    task_name=task_name,
+                    params=task_params,
+                    status=AssignmentStatus.PENDING_ACK,
+                    hour_index=hour_index,
+                    ends_at=ends_at,
+                    forced=True
+                )
+                
+                db.add(new_assignment)
+                db.flush()
+                assignment_id = new_assignment.id
+                action_type = "created"
+            
+            db.commit()
+            
+            # Log the action
+            log_action(
+                db,
+                action="force_assignment",
+                actor_id=str(interaction.user.id),
+                target=str(assignment_id),
+                metadata={
+                    "target_user": str(user.id),
+                    "task_name": task_name,
+                    "params": task_params,
+                    "hour_index": hour_index,
+                    "action_type": action_type
+                }
+            )
+            
+            # Send assignment widget to user's thread
+            if assignment_scheduler:
+                try:
+                    assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+                    await assignment_scheduler.post_assignment_widget(assignment)
+                except Exception as e:
+                    logger.error(f"Failed to post force-assigned widget: {e}")
+            
+            # Send confirmation
+            embed = discord.Embed(
+                title="✅ Task Force Assigned",
+                color=0x00ff00
+            )
+            embed.add_field(name="User", value=user.mention, inline=True)
+            embed.add_field(name="Task", value=task_name, inline=True)
+            embed.add_field(name="Hour", value=str(hour_index), inline=True)
+            
+            if task_params:
+                embed.add_field(
+                    name="Parameters",
+                    value=f"```json\n{json.dumps(task_params, indent=2)}\n```"[:1000],
+                    inline=False
+                )
+            
+            embed.add_field(
+                name="Status",
+                value=f"Assignment {action_type} and sent to operator",
+                inline=False
+            )
+            
+            embed.set_footer(text=f"Assignment ID: {assignment_id}")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+    except Exception as e:
+        logger.error(f"Error in force assign command: {e}")
+        await interaction.response.send_message(
+            "❌ An error occurred while force assigning the task.",
+            ephemeral=True
+        )
 
 
 if __name__ == '__main__':

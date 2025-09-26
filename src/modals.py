@@ -410,7 +410,7 @@ class EditApprovalView(discord.ui.View):
     async def deny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Handle deny button click"""
         # Show modal for denial reason
-        modal = ApprovalReasonModal("deny", self.assignment_id, self.user_id)
+        modal = ApprovalReasonModal("deny_edit", self.assignment_id, self.user_id, interaction.message)
         await interaction.response.send_modal(modal)
     
     async def _handle_approval(self, interaction: discord.Interaction, approved: bool, reason: str):
@@ -518,7 +518,7 @@ class EndEarlyApprovalView(discord.ui.View):
         style=discord.ButtonStyle.danger
     )
     async def deny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = ApprovalReasonModal("deny_end_early", self.assignment_id, self.user_id)
+        modal = ApprovalReasonModal("deny_end_early", self.assignment_id, self.user_id, interaction.message)
         await interaction.response.send_modal(modal)
     
     async def _handle_approval(self, interaction: discord.Interaction, approved: bool, reason: str):
@@ -570,11 +570,12 @@ class EndEarlyApprovalView(discord.ui.View):
 class ApprovalReasonModal(discord.ui.Modal):
     """Modal for entering approval/denial reasons"""
     
-    def __init__(self, action_type: str, assignment_id: int, user_id: str):
+    def __init__(self, action_type: str, assignment_id: int, user_id: str, original_message: discord.Message):
         super().__init__(title=f"Reason for {action_type.replace('_', ' ').title()}")
         self.action_type = action_type
         self.assignment_id = assignment_id
         self.user_id = user_id
+        self.original_message = original_message
         
         self.reason = discord.ui.TextInput(
             label="Reason (optional)",
@@ -587,10 +588,89 @@ class ApprovalReasonModal(discord.ui.Modal):
     
     async def on_submit(self, interaction: discord.Interaction):
         """Handle reason submission"""
-        # Find the appropriate approval view and handle denial
-        if "edit" in self.action_type:
-            view = EditApprovalView(self.assignment_id, self.user_id)
-            await view._handle_approval(interaction, False, self.reason.value)
-        elif "end_early" in self.action_type:
-            view = EndEarlyApprovalView(self.assignment_id, self.user_id)
-            await view._handle_approval(interaction, False, self.reason.value)
+        try:
+            # Handle the denial directly
+            await self._handle_denial(interaction, self.reason.value)
+        except Exception as e:
+            logger.error(f"Error in approval reason modal: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while processing the denial.",
+                ephemeral=True
+            )
+    
+    async def _handle_denial(self, interaction: discord.Interaction, reason: str):
+        """Handle the denial with reason"""
+        try:
+            with get_db_session() as db:
+                # Determine request type
+                request_type = ApprovalType.EDIT if "edit" in self.action_type else ApprovalType.END_EARLY
+                
+                # Find and update the approval request
+                request = db.query(ApprovalRequest).filter(
+                    ApprovalRequest.assignment_id == self.assignment_id,
+                    ApprovalRequest.user_id == self.user_id,
+                    ApprovalRequest.type == request_type,
+                    ApprovalRequest.status == ApprovalStatus.PENDING
+                ).first()
+                
+                if not request:
+                    await interaction.response.send_message(
+                        "❌ Approval request not found or already processed.",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Update request
+                request.status = ApprovalStatus.DENIED
+                request.resolved_at = datetime.now(timezone.utc)
+                request.resolver_id = str(interaction.user.id)
+                request.resolver_note = reason
+                
+                db.commit()
+                
+                # Log the action
+                log_action(
+                    db,
+                    action=f"{request_type.value}_request_denied",
+                    actor_id=str(interaction.user.id),
+                    target=str(self.assignment_id),
+                    metadata={
+                        "reason": reason,
+                        "original_user": self.user_id
+                    }
+                )
+                
+                # Update the original message
+                embed = self.original_message.embeds[0]
+                embed.color = 0xff0000
+                embed.title = f"❌ DENIED - {embed.title}"
+                embed.add_field(
+                    name="Denied By",
+                    value=f"{interaction.user.display_name}{f' - {reason}' if reason else ''}",
+                    inline=False
+                )
+                
+                # Create disabled view
+                if "edit" in self.action_type:
+                    view = EditApprovalView(self.assignment_id, self.user_id)
+                else:
+                    view = EndEarlyApprovalView(self.assignment_id, self.user_id)
+                
+                for item in view.children:
+                    item.disabled = True
+                
+                await self.original_message.edit(embed=embed, view=view)
+                
+                await interaction.response.send_message(
+                    f"✅ Request denied{f': {reason}' if reason else ''}",
+                    ephemeral=True
+                )
+                
+                # TODO: Notify the operator about the denial
+                
+        except Exception as e:
+            logger.error(f"Error handling denial: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while processing the denial.",
+                ephemeral=True
+            )
