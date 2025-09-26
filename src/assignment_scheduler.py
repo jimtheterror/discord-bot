@@ -7,14 +7,16 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
+import discord
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
 from .database import get_db_session
-from .models import User, Shift, Assignment, AssignmentStatus, Settings, log_action
+from .models import User, Shift, Assignment, AssignmentStatus, Settings, TaskTemplate, log_action
 from .selectors import SelectionService
+from .thread_manager import ThreadManager
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ class AssignmentScheduler:
         self.bot = bot
         self.scheduler = AsyncIOScheduler(timezone=timezone.utc)
         self.selection_service = SelectionService()
+        self.thread_manager = ThreadManager(bot)
         self.running = False
         
         # Track pending acknowledgments for escalation
@@ -268,17 +271,120 @@ class AssignmentScheduler:
     async def post_assignment_widget(self, assignment: Assignment):
         """Post assignment widget to operator's thread"""
         try:
-            # This will be implemented when we create the thread management
-            # For now, just log what would happen
-            logger.info(f"Would post assignment widget for user {assignment.user_id}, task {assignment.task_name}")
-            
-            # TODO: Implement actual widget posting
-            # - Find or create private thread for user
-            # - Post embed with task details
-            # - Add interactive buttons (Start, Edit, End Early, etc.)
-            
+            # Get user information
+            with get_db_session() as db:
+                user = db.query(User).filter(User.id == assignment.user_id).first()
+                if not user:
+                    logger.error(f"User {assignment.user_id} not found for assignment {assignment.id}")
+                    return
+                
+                # Get the guild (assuming single guild for now)
+                guild = None
+                for g in self.bot.guilds:
+                    if g.get_member(int(assignment.user_id)):
+                        guild = g
+                        break
+                
+                if not guild:
+                    logger.error(f"Could not find guild for user {assignment.user_id}")
+                    return
+                
+                # Get or create thread
+                thread = await self.thread_manager.get_or_create_operator_thread(
+                    guild, assignment.user_id, user.display_name
+                )
+                
+                if not thread:
+                    logger.error(f"Could not get/create thread for user {assignment.user_id}")
+                    return
+                
+                # Create assignment widget embed and view
+                embed, view = await self.create_assignment_widget(assignment, user)
+                
+                # Post the widget
+                message = await thread.send(embed=embed, view=view)
+                
+                logger.info(f"Posted assignment widget for {user.display_name}, task {assignment.task_name}")
+                
         except Exception as e:
             logger.error(f"Failed to post assignment widget for {assignment.id}: {e}")
+            
+    async def create_assignment_widget(self, assignment: Assignment, user: User):
+        """Create embed and view for assignment widget"""
+        import discord
+        from datetime import timezone
+        
+        # Calculate time remaining
+        time_remaining = "Unknown"
+        if assignment.ends_at:
+            now = datetime.now(timezone.utc)
+            if assignment.ends_at > now:
+                remaining = assignment.ends_at - now
+                hours = int(remaining.total_seconds() // 3600)
+                minutes = int((remaining.total_seconds() % 3600) // 60)
+                if hours > 0:
+                    time_remaining = f"{hours}h {minutes}m"
+                else:
+                    time_remaining = f"{minutes}m"
+            else:
+                time_remaining = "Overdue"
+        
+        # Create embed
+        embed = discord.Embed(
+            title=f"📋 Hour {assignment.hour_index} Assignment",
+            color=0x3498db if assignment.status == AssignmentStatus.PENDING_ACK else 0x00ff00
+        )
+        
+        embed.add_field(
+            name="Task",
+            value=assignment.task_name,
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Status", 
+            value=assignment.status.value.replace('_', ' ').title(),
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Time Remaining",
+            value=time_remaining,
+            inline=True
+        )
+        
+        if assignment.started_at:
+            embed.add_field(
+                name="Started At",
+                value=f"<t:{int(assignment.started_at.timestamp())}:t>",
+                inline=True
+            )
+        
+        if assignment.ends_at:
+            embed.add_field(
+                name="Ends At",
+                value=f"<t:{int(assignment.ends_at.timestamp())}:t>",
+                inline=True
+            )
+        
+        # Add instructions if available
+        with get_db_session() as db:
+            if assignment.template_id:
+                template = db.query(TaskTemplate).filter(TaskTemplate.id == assignment.template_id).first()
+                if template and template.instructions:
+                    embed.add_field(
+                        name="Instructions",
+                        value=template.instructions[:200] + ("..." if len(template.instructions) > 200 else ""),
+                        inline=False
+                    )
+        
+        embed.set_footer(text=f"Assignment ID: {assignment.id}")
+        embed.timestamp = datetime.utcnow()
+        
+        # Create view with buttons
+        view = AssignmentView(assignment.id, assignment.hour_index, assignment.status)
+        
+        return embed, view
             
     async def check_pending_acknowledgments(self):
         """Check for pending acknowledgments and send reminders/escalate"""
@@ -311,10 +417,21 @@ class AssignmentScheduler:
         try:
             logger.info(f"Sending 5-minute reminder for assignment {assignment.id}")
             
-            # TODO: Send reminder to operator thread
-            # TODO: Send alert to admin channel
-            
+            # Get user details
             with get_db_session() as db:
+                user = db.query(User).filter(User.id == assignment.user_id).first()
+                if not user:
+                    logger.error(f"User {assignment.user_id} not found for reminder")
+                    return
+                
+                settings = get_settings(db)
+                
+                # Send reminder to operator thread
+                await self._send_operator_reminder(assignment, user, settings)
+                
+                # Send alert to admin channel
+                await self._send_admin_alert(assignment, user, settings, "5-minute reminder")
+                
                 log_action(
                     db,
                     action="acknowledgment_reminder_sent",
@@ -329,12 +446,139 @@ class AssignmentScheduler:
         except Exception as e:
             logger.error(f"Failed to send acknowledgment reminder for {assignment.id}: {e}")
             
+    async def _send_operator_reminder(self, assignment: Assignment, user: User, settings):
+        """Send reminder message to operator's thread"""
+        try:
+            # Find guild and get thread
+            guild = None
+            for g in self.bot.guilds:
+                if g.get_member(int(assignment.user_id)):
+                    guild = g
+                    break
+            
+            if not guild:
+                logger.error(f"Could not find guild for user {assignment.user_id}")
+                return
+                
+            thread = await self.thread_manager.get_or_create_operator_thread(
+                guild, assignment.user_id, user.display_name
+            )
+            
+            if not thread:
+                logger.error(f"Could not get thread for user {assignment.user_id}")
+                return
+            
+            # Create reminder embed
+            embed = discord.Embed(
+                title="⏰ Task Acknowledgment Reminder",
+                description=(
+                    f"Hey {user.display_name}! You have a task waiting for acknowledgment.\n\n"
+                    f"**Task:** {assignment.task_name}\n"
+                    f"**Hour:** {assignment.hour_index}\n"
+                    f"**Time since posted:** 5 minutes\n\n"
+                    "Please click the **▶️ Start Task** button to begin working."
+                ),
+                color=0xffa500,
+                timestamp=datetime.utcnow()
+            )
+            
+            # Ping the user
+            discord_user = guild.get_member(int(assignment.user_id))
+            content = f"{discord_user.mention} 📋 Task acknowledgment needed!" if discord_user else "📋 Task acknowledgment needed!"
+            
+            await thread.send(content=content, embed=embed)
+            logger.info(f"Sent reminder to {user.display_name}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send operator reminder: {e}")
+            
+    async def _send_admin_alert(self, assignment: Assignment, user: User, settings, alert_type: str):
+        """Send alert to admin channel"""
+        try:
+            if not settings.admin_channel_id:
+                logger.warning("No admin channel configured for alerts")
+                return
+            
+            # Find guild and admin channel
+            guild = None
+            for g in self.bot.guilds:
+                if g.get_member(int(assignment.user_id)):
+                    guild = g
+                    break
+            
+            if not guild:
+                return
+                
+            admin_channel = guild.get_channel(int(settings.admin_channel_id))
+            if not admin_channel:
+                try:
+                    admin_channel = await guild.fetch_channel(int(settings.admin_channel_id))
+                except (discord.NotFound, discord.Forbidden):
+                    logger.error(f"Admin channel {settings.admin_channel_id} not found")
+                    return
+            
+            # Create alert embed
+            embed = discord.Embed(
+                title=f"🚨 Assignment Alert: {alert_type}",
+                color=0xff6b6b
+            )
+            
+            embed.add_field(
+                name="Operator",
+                value=user.display_name,
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Task", 
+                value=assignment.task_name,
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Hour",
+                value=str(assignment.hour_index),
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Status",
+                value=assignment.status.value.replace('_', ' ').title(),
+                inline=True
+            )
+            
+            # Add time elapsed
+            if assignment.created_at:
+                elapsed = datetime.now(timezone.utc) - assignment.created_at
+                elapsed_minutes = int(elapsed.total_seconds() / 60)
+                embed.add_field(
+                    name="Time Elapsed",
+                    value=f"{elapsed_minutes} minutes",
+                    inline=True
+                )
+            
+            embed.set_footer(text=f"Assignment ID: {assignment.id}")
+            embed.timestamp = datetime.utcnow()
+            
+            await admin_channel.send(embed=embed)
+            logger.info(f"Sent admin alert for assignment {assignment.id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send admin alert: {e}")
+            
     async def escalate_unacknowledged_assignment(self, assignment: Assignment):
         """Escalate unacknowledged non-Data Labelling assignment"""
         try:
             logger.info(f"Escalating unacknowledged assignment {assignment.id}")
             
             with get_db_session() as db:
+                user = db.query(User).filter(User.id == assignment.user_id).first()
+                settings = get_settings(db)
+                
+                if not user:
+                    logger.error(f"User {assignment.user_id} not found for escalation")
+                    return
+                
                 # Try to find a Data Labelling operator to reassign to
                 candidates = await self.get_reassignment_candidates(assignment)
                 
@@ -342,11 +586,23 @@ class AssignmentScheduler:
                     # Reassign to first candidate
                     new_assignee = candidates[0]
                     
-                    # TODO: Implement actual reassignment
-                    logger.info(f"Would reassign {assignment.task_name} from {assignment.user_id} to {new_assignee.id}")
+                    success = await self._perform_reassignment(assignment, new_assignee, db)
                     
+                    if success:
+                        # Send notifications about successful reassignment
+                        await self._send_reassignment_notifications(
+                            assignment, user, new_assignee, settings, "escalation"
+                        )
+                    else:
+                        # Fallback: send admin alert about failed reassignment
+                        await self._send_admin_alert(
+                            assignment, user, settings, "escalation - reassignment failed"
+                        )
                 else:
-                    # No candidates available, mark as queued
+                    # No candidates available, send admin alert
+                    await self._send_admin_alert(
+                        assignment, user, settings, "escalation - no candidates available"
+                    )
                     logger.warning(f"No reassignment candidates available for assignment {assignment.id}")
                 
                 log_action(
@@ -357,12 +613,203 @@ class AssignmentScheduler:
                         "user_id": assignment.user_id,
                         "task_name": assignment.task_name,
                         "candidates_found": len(candidates),
+                        "reassigned_to": candidates[0].id if candidates else None,
                         "minutes_elapsed": 10
                     }
                 )
             
         except Exception as e:
             logger.error(f"Failed to escalate assignment {assignment.id}: {e}")
+            
+    async def _perform_reassignment(
+        self, 
+        original_assignment: Assignment, 
+        new_assignee: User, 
+        db: Session
+    ) -> bool:
+        """Perform the actual reassignment of a task"""
+        try:
+            # Find the new assignee's current Data Labelling assignment  
+            current_assignment = db.query(Assignment).filter(
+                Assignment.user_id == new_assignee.id,
+                Assignment.hour_index == original_assignment.hour_index,
+                Assignment.status == AssignmentStatus.ACTIVE,
+                Assignment.task_name == "Data Labelling"
+            ).first()
+            
+            if not current_assignment:
+                logger.warning(f"Could not find current Data Labelling assignment for {new_assignee.id}")
+                return False
+            
+            # Update the original assignment to mark it as ended early (unacknowledged)
+            original_assignment.status = AssignmentStatus.ENDED_EARLY
+            original_assignment.ended_at = datetime.now(timezone.utc)
+            
+            # Update the new assignee's assignment to the escalated task
+            current_assignment.task_name = original_assignment.task_name
+            current_assignment.template_id = original_assignment.template_id
+            current_assignment.params = original_assignment.params
+            current_assignment.covering_for_user_id = original_assignment.user_id
+            # Keep it as ACTIVE since they were already working
+            
+            db.commit()
+            
+            logger.info(
+                f"Reassigned {original_assignment.task_name} from {original_assignment.user_id} "
+                f"to {new_assignee.id} due to escalation"
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to perform reassignment: {e}")
+            db.rollback()
+            return False
+            
+    async def _send_reassignment_notifications(
+        self,
+        original_assignment: Assignment,
+        original_user: User, 
+        new_assignee: User,
+        settings,
+        reason: str
+    ):
+        """Send notifications about task reassignment"""
+        try:
+            # Find guild
+            guild = None
+            for g in self.bot.guilds:
+                if g.get_member(int(new_assignee.id)):
+                    guild = g
+                    break
+            
+            if not guild:
+                logger.error("Could not find guild for reassignment notifications")
+                return
+            
+            # Notify new assignee in their thread
+            new_thread = await self.thread_manager.get_or_create_operator_thread(
+                guild, new_assignee.id, new_assignee.display_name
+            )
+            
+            if new_thread:
+                embed = discord.Embed(
+                    title="🔄 Task Reassignment",
+                    description=(
+                        f"You've been assigned a new task due to {reason}.\n\n"
+                        f"**New Task:** {original_assignment.task_name}\n"
+                        f"**Hour:** {original_assignment.hour_index}\n"
+                        f"**Covering for:** {original_user.display_name}\n\n"
+                        "This task is now active - please begin working on it."
+                    ),
+                    color=0x3498db,
+                    timestamp=datetime.utcnow()
+                )
+                
+                discord_user = guild.get_member(int(new_assignee.id))
+                content = f"{discord_user.mention} 📋 New task assignment!" if discord_user else "📋 New task assignment!"
+                
+                await new_thread.send(content=content, embed=embed)
+            
+            # Notify original user in their thread
+            orig_thread = await self.thread_manager.get_or_create_operator_thread(
+                guild, original_assignment.user_id, original_user.display_name
+            )
+            
+            if orig_thread:
+                embed = discord.Embed(
+                    title="⚠️ Task Reassigned",
+                    description=(
+                        f"Your task has been reassigned due to no acknowledgment.\n\n"
+                        f"**Task:** {original_assignment.task_name}\n"
+                        f"**Hour:** {original_assignment.hour_index}\n"
+                        f"**Reassigned to:** {new_assignee.display_name}\n\n"
+                        "Please make sure to acknowledge future tasks promptly."
+                    ),
+                    color=0xff6b6b,
+                    timestamp=datetime.utcnow()
+                )
+                
+                await orig_thread.send(embed=embed)
+            
+            # Send admin notification
+            await self._send_admin_reassignment_alert(
+                original_assignment, original_user, new_assignee, settings, reason
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to send reassignment notifications: {e}")
+            
+    async def _send_admin_reassignment_alert(
+        self,
+        assignment: Assignment,
+        original_user: User, 
+        new_assignee: User,
+        settings,
+        reason: str
+    ):
+        """Send admin alert about task reassignment"""
+        try:
+            if not settings.admin_channel_id:
+                return
+            
+            # Find guild and admin channel
+            guild = None
+            for g in self.bot.guilds:
+                if g.get_member(int(original_user.id)):
+                    guild = g
+                    break
+            
+            if not guild:
+                return
+            
+            admin_channel = guild.get_channel(int(settings.admin_channel_id))
+            if not admin_channel:
+                return
+            
+            embed = discord.Embed(
+                title="🔄 Task Reassigned",
+                description=f"Task reassignment due to {reason}",
+                color=0xffa500
+            )
+            
+            embed.add_field(
+                name="Original Operator",
+                value=original_user.display_name,
+                inline=True
+            )
+            
+            embed.add_field(
+                name="New Operator", 
+                value=new_assignee.display_name,
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Task",
+                value=assignment.task_name,
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Hour",
+                value=str(assignment.hour_index),
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Reason",
+                value=reason.title(),
+                inline=True
+            )
+            
+            embed.set_footer(text=f"Assignment ID: {assignment.id}")
+            embed.timestamp = datetime.utcnow()
+            
+            await admin_channel.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Failed to send admin reassignment alert: {e}")
             
     async def get_reassignment_candidates(self, assignment: Assignment) -> List[User]:
         """Find operators available for reassignment"""
@@ -394,3 +841,301 @@ class AssignmentScheduler:
             
         except Exception as e:
             logger.error(f"Failed to update dashboard: {e}")
+
+
+class AssignmentView(discord.ui.View):
+    """Interactive view for assignment widgets with buttons"""
+    
+    def __init__(self, assignment_id: int, hour_index: int, status: AssignmentStatus):
+        super().__init__(timeout=3600)  # 1 hour timeout
+        self.assignment_id = assignment_id
+        self.hour_index = hour_index
+        self.assignment_status = status
+        
+        # Configure buttons based on current status
+        self._configure_buttons()
+    
+    def _configure_buttons(self):
+        """Configure which buttons are enabled based on assignment status"""
+        # Start button - only available if pending acknowledgment
+        self.start_button.disabled = self.assignment_status != AssignmentStatus.PENDING_ACK
+        
+        # Edit/End Early buttons - only available if active
+        can_edit = self.assignment_status in [AssignmentStatus.ACTIVE, AssignmentStatus.COVERING]
+        self.edit_button.disabled = not can_edit
+        self.end_early_button.disabled = not can_edit
+        
+        # Break buttons - available if active and not already on break/lunch
+        can_break = self.assignment_status in [AssignmentStatus.ACTIVE, AssignmentStatus.COVERING]
+        self.break_button.disabled = not can_break
+        
+        # Lunch button - only available hours 3-5 and if active
+        can_lunch = (can_break and self.hour_index in [3, 4, 5])
+        self.lunch_button.disabled = not can_lunch
+    
+    @discord.ui.button(
+        label="▶️ Start Task",
+        style=discord.ButtonStyle.primary,
+        custom_id="start_task"
+    )
+    async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle start task button click"""
+        try:
+            from .assignment_operations import AssignmentOperations
+            
+            # Initialize operations service
+            operations = AssignmentOperations(interaction.client)
+            
+            # Start the task
+            success, message = await operations.start_task(
+                self.assignment_id,
+                str(interaction.user.id)
+            )
+            
+            if success:
+                # Update button states
+                self.assignment_status = AssignmentStatus.ACTIVE
+                self._configure_buttons()
+                
+                # Update the widget message
+                await self._update_widget_message(interaction, operations)
+                
+                await interaction.response.send_message(
+                    f"✅ {message}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"❌ {message}",
+                    ephemeral=True
+                )
+            
+        except Exception as e:
+            logger.error(f"Error in start task button: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while starting the task.",
+                ephemeral=True
+            )
+    
+    @discord.ui.button(
+        label="✏️ Edit Task",
+        style=discord.ButtonStyle.secondary,
+        custom_id="edit_task"
+    )
+    async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle edit task button click"""
+        try:
+            # TODO: Implement edit task modal
+            await interaction.response.send_message(
+                "✏️ Edit task modal (Implementation coming soon)",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in edit task button: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while editing the task.",
+                ephemeral=True
+            )
+    
+    @discord.ui.button(
+        label="⏹️ End Early",
+        style=discord.ButtonStyle.secondary,
+        custom_id="end_early"
+    )
+    async def end_early_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle end early button click"""
+        try:
+            # TODO: Implement end early modal
+            await interaction.response.send_message(
+                "⏹️ End early modal (Implementation coming soon)",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in end early button: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while ending the task early.",
+                ephemeral=True
+            )
+    
+    @discord.ui.button(
+        label="☕ Break (15m)",
+        style=discord.ButtonStyle.secondary,
+        custom_id="break_15m",
+        row=1
+    )
+    async def break_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle break button click"""
+        try:
+            # TODO: Implement break modal and approval
+            await interaction.response.send_message(
+                "☕ Break request (Implementation coming soon)",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in break button: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while requesting a break.",
+                ephemeral=True
+            )
+    
+    @discord.ui.button(
+        label="🍽️ Lunch (60m)",
+        style=discord.ButtonStyle.secondary,
+        custom_id="lunch_60m",
+        row=1
+    )
+    async def lunch_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle lunch button click"""
+        try:
+            # TODO: Implement lunch modal and approval
+            await interaction.response.send_message(
+                "🍽️ Lunch request (Implementation coming soon)",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in lunch button: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while requesting lunch.",
+                ephemeral=True
+            )
+    
+    async def _update_widget_message(self, interaction: discord.Interaction, operations):
+        """Update the widget message with current assignment state"""
+        try:
+            # Get updated assignment details
+            assignment = await operations.get_assignment_details(self.assignment_id)
+            if not assignment:
+                return
+            
+            # Get user details
+            with get_db_session() as db:
+                user = db.query(User).filter(User.id == assignment.user_id).first()
+                if not user:
+                    return
+            
+            # Recreate embed with updated information
+            embed = await self._create_updated_embed(assignment, user)
+            
+            # Update the message (this will be deferred if interaction was already responded to)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=embed, view=self)
+                else:
+                    await interaction.edit_original_response(embed=embed, view=self)
+            except discord.NotFound:
+                # Message might have been deleted, ignore
+                pass
+            except discord.HTTPException as e:
+                logger.warning(f"Failed to update widget message: {e}")
+                
+        except Exception as e:
+            logger.error(f"Failed to update widget message: {e}")
+    
+    async def _create_updated_embed(self, assignment: Assignment, user: User):
+        """Create updated embed with current assignment state"""
+        # Calculate time remaining
+        time_remaining = "Unknown"
+        if assignment.ends_at:
+            now = datetime.now(timezone.utc)
+            if assignment.ends_at > now:
+                remaining = assignment.ends_at - now
+                hours = int(remaining.total_seconds() // 3600)
+                minutes = int((remaining.total_seconds() % 3600) // 60)
+                if hours > 0:
+                    time_remaining = f"{hours}h {minutes}m"
+                else:
+                    time_remaining = f"{minutes}m"
+            else:
+                time_remaining = "Overdue"
+        
+        # Status-based coloring
+        color = 0x3498db  # Blue for pending
+        if assignment.status == AssignmentStatus.ACTIVE:
+            color = 0x00ff00  # Green for active
+        elif assignment.status == AssignmentStatus.COMPLETED:
+            color = 0x9932cc  # Purple for completed
+        elif assignment.status in [AssignmentStatus.PAUSED_BREAK, AssignmentStatus.PAUSED_LUNCH]:
+            color = 0xffa500  # Orange for paused
+        
+        # Create embed
+        embed = discord.Embed(
+            title=f"📋 Hour {assignment.hour_index} Assignment",
+            color=color
+        )
+        
+        embed.add_field(
+            name="Task",
+            value=assignment.task_name,
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Status", 
+            value=assignment.status.value.replace('_', ' ').title(),
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Time Remaining",
+            value=time_remaining,
+            inline=True
+        )
+        
+        if assignment.started_at:
+            embed.add_field(
+                name="Started At",
+                value=f"<t:{int(assignment.started_at.timestamp())}:t>",
+                inline=True
+            )
+        
+        if assignment.ends_at:
+            embed.add_field(
+                name="Ends At",
+                value=f"<t:{int(assignment.ends_at.timestamp())}:t>",
+                inline=True
+            )
+        
+        # Add task completion indicator
+        if assignment.status == AssignmentStatus.COMPLETED:
+            if assignment.ended_at and assignment.started_at:
+                duration_minutes = int((assignment.ended_at - assignment.started_at).total_seconds() / 60)
+                embed.add_field(
+                    name="Duration",
+                    value=f"{duration_minutes} minutes",
+                    inline=True
+                )
+            embed.add_field(
+                name="🎉 Completed!",
+                value="Great work completing this task!",
+                inline=False
+            )
+        
+        # Add instructions if available
+        with get_db_session() as db:
+            if assignment.template_id:
+                template = db.query(TaskTemplate).filter(TaskTemplate.id == assignment.template_id).first()
+                if template and template.instructions:
+                    embed.add_field(
+                        name="Instructions",
+                        value=template.instructions[:200] + ("..." if len(template.instructions) > 200 else ""),
+                        inline=False
+                    )
+        
+        embed.set_footer(text=f"Assignment ID: {assignment.id}")
+        embed.timestamp = datetime.utcnow()
+        
+        return embed
+    
+    async def on_timeout(self):
+        """Called when the view times out"""
+        # Disable all buttons
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        
+        # Note: We can't edit the message here without storing a reference to it
+        # The message editing will be handled by the scheduler's periodic updates
