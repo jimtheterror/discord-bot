@@ -13,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
 
 from .database import get_db_session
-from .models import User, Shift, Assignment, AssignmentStatus, log_action
+from .models import User, Shift, Assignment, AssignmentStatus, Settings, log_action
 from .selectors import SelectionService
 
 logger = logging.getLogger(__name__)

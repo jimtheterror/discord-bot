@@ -3,7 +3,7 @@ Pure function selectors for task assignment logic.
 All functions here should be stateless and easily testable.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 

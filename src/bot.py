@@ -5,7 +5,7 @@ import asyncio
 import os
 import json
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 import pytz
 from dataclasses import dataclass
 from typing import Optional, Dict, List
@@ -18,6 +18,11 @@ sys.path.append(current_dir)
 from scheduler.scheduler import ROBOT_IDS
 from dashboard_manager import EquipmentDashboard
 from dotenv import load_dotenv
+
+# Task assignment system imports
+from database import init_database, check_database_connection, get_db_session
+from models import get_or_create_user, get_settings
+from assignment_scheduler import AssignmentScheduler
 
 # Load environment variables
 load_dotenv()
@@ -53,6 +58,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Initialize Equipment Dashboard manager
 equipment_dashboard = EquipmentDashboard()
+
+# Initialize Assignment Scheduler (will be set after bot is ready)
+assignment_scheduler = None
 
 # Nickname storage file
 NICKNAME_STORAGE_FILE = "nickname_storage.json"
@@ -503,6 +511,25 @@ async def on_ready():
     """Called when the bot is ready"""
     logger.info(f'LakBay Bot is ready! Logged in as {bot.user}')
     
+    # Initialize database
+    logger.info("Initializing database...")
+    if not check_database_connection():
+        logger.error("Database connection failed - bot may not function properly")
+    else:
+        if not init_database():
+            logger.error("Database initialization failed - bot may not function properly")
+        else:
+            logger.info("Database initialized successfully")
+    
+    # Initialize assignment scheduler
+    global assignment_scheduler
+    try:
+        assignment_scheduler = AssignmentScheduler(bot)
+        await assignment_scheduler.start()
+        logger.info("Assignment scheduler started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start assignment scheduler: {e}")
+    
     # Sync slash commands to all guilds the bot is in
     try:
         # Global sync (takes up to 1 hour)
@@ -801,6 +828,446 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.followup.send(error_message, ephemeral=True)
     except Exception as e:
         logger.error(f"Failed to send error message: {e}")
+
+# Assignment system settings commands
+@bot.tree.command(name="settings", description="[Admin] Configure task assignment system settings")
+@app_commands.describe(
+    assignments_channel="Channel for assignment threads",
+    admin_channel="Channel for admin notifications", 
+    operator_role="Role identifying operators",
+    admin_role="Role for admin permissions (optional)",
+    timezone="Timezone for shift scheduling (default: America/Los_Angeles)",
+    min_on_duty="Minimum operators required on duty (default: 3)",
+    cooldown_edit_sec="Edit task cooldown in seconds (default: 300)",
+    cooldown_end_early_sec="End task early cooldown in seconds (default: 300)"
+)
+async def settings_command(
+    interaction: discord.Interaction,
+    assignments_channel: Optional[discord.TextChannel] = None,
+    admin_channel: Optional[discord.TextChannel] = None, 
+    operator_role: Optional[discord.Role] = None,
+    admin_role: Optional[discord.Role] = None,
+    timezone: Optional[str] = None,
+    min_on_duty: Optional[int] = None,
+    cooldown_edit_sec: Optional[int] = None,
+    cooldown_end_early_sec: Optional[int] = None
+):
+    """Configure assignment system settings (Admin only)"""
+    
+    # Check permissions - require Manage Guild permission
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "❌ You need Manage Guild permission to configure settings.",
+            ephemeral=True
+        )
+        return
+        
+    try:
+        with get_db_session() as db:
+            settings = get_settings(db)
+            changes = []
+            
+            # Update settings based on provided parameters
+            if assignments_channel:
+                settings.assignments_channel_id = str(assignments_channel.id)
+                changes.append(f"Assignments channel: {assignments_channel.mention}")
+                
+            if admin_channel:
+                settings.admin_channel_id = str(admin_channel.id) 
+                changes.append(f"Admin channel: {admin_channel.mention}")
+                
+            if operator_role:
+                settings.operator_role_id = str(operator_role.id)
+                changes.append(f"Operator role: {operator_role.mention}")
+                
+            if admin_role:
+                settings.admin_role_id = str(admin_role.id)
+                changes.append(f"Admin role: {admin_role.mention}")
+                
+            if timezone:
+                # Validate timezone
+                try:
+                    pytz.timezone(timezone)
+                    settings.timezone = timezone
+                    changes.append(f"Timezone: {timezone}")
+                except:
+                    await interaction.response.send_message(
+                        f"❌ Invalid timezone: {timezone}",
+                        ephemeral=True
+                    )
+                    return
+                    
+            if min_on_duty is not None:
+                if min_on_duty < 1 or min_on_duty > 20:
+                    await interaction.response.send_message(
+                        "❌ Minimum on duty must be between 1 and 20",
+                        ephemeral=True
+                    )
+                    return
+                settings.min_on_duty = min_on_duty
+                changes.append(f"Minimum on duty: {min_on_duty}")
+                
+            if cooldown_edit_sec is not None:
+                if cooldown_edit_sec < 0 or cooldown_edit_sec > 3600:
+                    await interaction.response.send_message(
+                        "❌ Edit cooldown must be between 0 and 3600 seconds",
+                        ephemeral=True
+                    )
+                    return
+                settings.cooldown_edit_sec = cooldown_edit_sec
+                changes.append(f"Edit cooldown: {cooldown_edit_sec}s")
+                
+            if cooldown_end_early_sec is not None:
+                if cooldown_end_early_sec < 0 or cooldown_end_early_sec > 3600:
+                    await interaction.response.send_message(
+                        "❌ End early cooldown must be between 0 and 3600 seconds",
+                        ephemeral=True
+                    )
+                    return
+                settings.cooldown_end_early_sec = cooldown_end_early_sec
+                changes.append(f"End early cooldown: {cooldown_end_early_sec}s")
+            
+            if not changes:
+                # Show current settings if no changes
+                embed = discord.Embed(
+                    title="📋 Current Assignment Settings",
+                    color=0x3498db
+                )
+                
+                assignments_ch = f"<#{settings.assignments_channel_id}>" if settings.assignments_channel_id else "Not set"
+                admin_ch = f"<#{settings.admin_channel_id}>" if settings.admin_channel_id else "Not set"
+                operator_r = f"<@&{settings.operator_role_id}>" if settings.operator_role_id else "Not set"
+                admin_r = f"<@&{settings.admin_role_id}>" if settings.admin_role_id else "Not set"
+                
+                embed.add_field(name="Assignments Channel", value=assignments_ch, inline=True)
+                embed.add_field(name="Admin Channel", value=admin_ch, inline=True)
+                embed.add_field(name="Operator Role", value=operator_r, inline=True)
+                embed.add_field(name="Admin Role", value=admin_r, inline=True)
+                embed.add_field(name="Timezone", value=settings.timezone, inline=True)
+                embed.add_field(name="Min On Duty", value=str(settings.min_on_duty), inline=True)
+                embed.add_field(name="Edit Cooldown", value=f"{settings.cooldown_edit_sec}s", inline=True)
+                embed.add_field(name="End Early Cooldown", value=f"{settings.cooldown_end_early_sec}s", inline=True)
+                
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+            
+            # Save changes
+            db.commit()
+            
+            # Log the configuration change
+            from models import log_action
+            log_action(
+                db,
+                action="settings_updated",
+                actor_id=str(interaction.user.id),
+                metadata={"changes": changes}
+            )
+            
+            embed = discord.Embed(
+                title="✅ Settings Updated",
+                description="\n".join(f"• {change}" for change in changes),
+                color=0x00ff00
+            )
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+    except Exception as e:
+        logger.error(f"Error in settings command: {e}")
+        await interaction.response.send_message(
+            "❌ An error occurred while updating settings.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="task", description="[Admin] Manage task templates")
+@app_commands.describe(
+    action="Action to perform",
+    name="Task name",
+    priority="Task priority (lower = higher priority)",
+    window_start="Start time (ISO format: YYYY-MM-DDTHH:MM:SSZ)",
+    window_end="End time (ISO format: YYYY-MM-DDTHH:MM:SSZ)",
+    instructions="Task instructions",
+    params_schema="JSON schema for parameters",
+    is_active="Whether task is active"
+)
+async def task_command(
+    interaction: discord.Interaction,
+    action: str,
+    name: Optional[str] = None,
+    priority: Optional[int] = None,
+    window_start: Optional[str] = None,
+    window_end: Optional[str] = None,
+    instructions: Optional[str] = None,
+    params_schema: Optional[str] = None,
+    is_active: Optional[bool] = None
+):
+    """Manage task templates (Admin only)"""
+    
+    # Check admin permissions
+    if not has_required_role(interaction, ["Admin", "Manager"]) and not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "❌ You need Admin/Manager role or Manage Guild permission to manage tasks.",
+            ephemeral=True
+        )
+        return
+    
+    try:
+        with get_db_session() as db:
+            if action == "list":
+                await list_tasks(interaction, db)
+            elif action == "add":
+                await add_task(interaction, db, name, priority, window_start, window_end, instructions, params_schema)
+            elif action == "update":
+                await update_task(interaction, db, name, priority, window_start, window_end, instructions, params_schema, is_active)
+            elif action == "remove":
+                await remove_task(interaction, db, name)
+            else:
+                await interaction.response.send_message(
+                    "❌ Invalid action. Use: list, add, update, or remove",
+                    ephemeral=True
+                )
+                
+    except Exception as e:
+        logger.error(f"Error in task command: {e}")
+        await interaction.response.send_message(
+            "❌ An error occurred while managing tasks.",
+            ephemeral=True
+        )
+
+
+async def list_tasks(interaction: discord.Interaction, db):
+    """List all task templates"""
+    from models import TaskTemplate
+    
+    tasks = db.query(TaskTemplate).order_by(TaskTemplate.priority, TaskTemplate.name).all()
+    
+    if not tasks:
+        await interaction.response.send_message("No tasks configured.", ephemeral=True)
+        return
+    
+    embed = discord.Embed(
+        title="📋 Task Templates",
+        color=0x3498db
+    )
+    
+    for task in tasks[:10]:  # Limit to first 10 to avoid embed size limits
+        status = "🟢 Active" if task.is_active else "🔴 Inactive"
+        window_info = ""
+        if task.window_start or task.window_end:
+            start = task.window_start.strftime('%m/%d %H:%M UTC') if task.window_start else "No start"
+            end = task.window_end.strftime('%m/%d %H:%M UTC') if task.window_end else "No end"
+            window_info = f"\n*Window: {start} - {end}*"
+        
+        embed.add_field(
+            name=f"{task.name} (Priority: {task.priority})",
+            value=f"{status}{window_info}\n{task.instructions[:100] + '...' if task.instructions and len(task.instructions) > 100 else task.instructions or 'No instructions'}",
+            inline=False
+        )
+    
+    if len(tasks) > 10:
+        embed.set_footer(text=f"Showing 10 of {len(tasks)} tasks")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def add_task(interaction, db, name, priority, window_start, window_end, instructions, params_schema):
+    """Add a new task template"""
+    from models import TaskTemplate
+    
+    if not name:
+        await interaction.response.send_message("❌ Task name is required.", ephemeral=True)
+        return
+        
+    # Check if task already exists
+    existing = db.query(TaskTemplate).filter(TaskTemplate.name == name).first()
+    if existing:
+        await interaction.response.send_message(f"❌ Task '{name}' already exists.", ephemeral=True)
+        return
+    
+    # Parse time windows if provided
+    start_dt = None
+    end_dt = None
+    
+    if window_start:
+        try:
+            start_dt = datetime.fromisoformat(window_start.replace('Z', '+00:00'))
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid window start format. Use ISO format: YYYY-MM-DDTHH:MM:SSZ", ephemeral=True)
+            return
+    
+    if window_end:
+        try:
+            end_dt = datetime.fromisoformat(window_end.replace('Z', '+00:00'))
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid window end format. Use ISO format: YYYY-MM-DDTHH:MM:SSZ", ephemeral=True)
+            return
+    
+    # Parse params schema if provided
+    schema_obj = None
+    if params_schema:
+        try:
+            import json
+            schema_obj = json.loads(params_schema)
+        except json.JSONDecodeError:
+            await interaction.response.send_message("❌ Invalid JSON schema format.", ephemeral=True)
+            return
+    
+    # Create task
+    task = TaskTemplate(
+        name=name,
+        priority=priority or 100,
+        window_start=start_dt,
+        window_end=end_dt,
+        instructions=instructions,
+        params_schema=schema_obj
+    )
+    
+    db.add(task)
+    db.commit()
+    
+    # Log the action
+    from models import log_action
+    log_action(
+        db,
+        action="task_template_added",
+        actor_id=str(interaction.user.id),
+        target=name,
+        metadata={"priority": task.priority}
+    )
+    
+    await interaction.response.send_message(f"✅ Task '{name}' added successfully.", ephemeral=True)
+
+
+async def update_task(interaction, db, name, priority, window_start, window_end, instructions, params_schema, is_active):
+    """Update existing task template"""
+    from models import TaskTemplate
+    
+    if not name:
+        await interaction.response.send_message("❌ Task name is required for updates.", ephemeral=True)
+        return
+        
+    task = db.query(TaskTemplate).filter(TaskTemplate.name == name).first()
+    if not task:
+        await interaction.response.send_message(f"❌ Task '{name}' not found.", ephemeral=True)
+        return
+    
+    changes = []
+    
+    if priority is not None:
+        task.priority = priority
+        changes.append(f"Priority: {priority}")
+    
+    if window_start is not None:
+        if window_start:
+            try:
+                task.window_start = datetime.fromisoformat(window_start.replace('Z', '+00:00'))
+                changes.append(f"Window start: {window_start}")
+            except ValueError:
+                await interaction.response.send_message("❌ Invalid window start format.", ephemeral=True)
+                return
+        else:
+            task.window_start = None
+            changes.append("Window start: cleared")
+    
+    if window_end is not None:
+        if window_end:
+            try:
+                task.window_end = datetime.fromisoformat(window_end.replace('Z', '+00:00'))
+                changes.append(f"Window end: {window_end}")
+            except ValueError:
+                await interaction.response.send_message("❌ Invalid window end format.", ephemeral=True)
+                return
+        else:
+            task.window_end = None
+            changes.append("Window end: cleared")
+    
+    if instructions is not None:
+        task.instructions = instructions if instructions else None
+        changes.append(f"Instructions: {'updated' if instructions else 'cleared'}")
+    
+    if params_schema is not None:
+        if params_schema:
+            try:
+                import json
+                task.params_schema = json.loads(params_schema)
+                changes.append("Params schema: updated")
+            except json.JSONDecodeError:
+                await interaction.response.send_message("❌ Invalid JSON schema format.", ephemeral=True)
+                return
+        else:
+            task.params_schema = None
+            changes.append("Params schema: cleared")
+    
+    if is_active is not None:
+        task.is_active = is_active
+        changes.append(f"Active: {'Yes' if is_active else 'No'}")
+    
+    if not changes:
+        await interaction.response.send_message("❌ No changes specified.", ephemeral=True)
+        return
+    
+    db.commit()
+    
+    # Log the action
+    from models import log_action
+    log_action(
+        db,
+        action="task_template_updated",
+        actor_id=str(interaction.user.id),
+        target=name,
+        metadata={"changes": changes}
+    )
+    
+    embed = discord.Embed(
+        title=f"✅ Task '{name}' Updated",
+        description="\n".join(f"• {change}" for change in changes),
+        color=0x00ff00
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def remove_task(interaction, db, name):
+    """Remove a task template"""
+    from models import TaskTemplate
+    
+    if not name:
+        await interaction.response.send_message("❌ Task name is required.", ephemeral=True)
+        return
+        
+    task = db.query(TaskTemplate).filter(TaskTemplate.name == name).first()
+    if not task:
+        await interaction.response.send_message(f"❌ Task '{name}' not found.", ephemeral=True)
+        return
+    
+    # Check if task has active assignments
+    from models import Assignment
+    active_assignments = db.query(Assignment).filter(
+        Assignment.template_id == task.id,
+        Assignment.status.in_(['pending_ack', 'active', 'covering', 'paused_break', 'paused_lunch'])
+    ).count()
+    
+    if active_assignments > 0:
+        await interaction.response.send_message(
+            f"❌ Cannot remove task '{name}' - it has {active_assignments} active assignments.",
+            ephemeral=True
+        )
+        return
+    
+    db.delete(task)
+    db.commit()
+    
+    # Log the action
+    from models import log_action
+    log_action(
+        db,
+        action="task_template_removed",
+        actor_id=str(interaction.user.id),
+        target=name
+    )
+    
+    await interaction.response.send_message(f"✅ Task '{name}' removed successfully.", ephemeral=True)
+
 
 if __name__ == '__main__':
     bot.run(TOKEN)
